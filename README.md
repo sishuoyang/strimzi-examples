@@ -2,8 +2,9 @@
 
 This repository contains the following Strimzi examples
 * Monitoring using Prometheus & Grafan with sample `Kafka Cluster` dashboard ported for K8s environment.
-* Scaling brokers up and down
-* Rebalance uneven disk usage among brokers
+* Kafka Cruise Control
+  * Scaling brokers up and down
+  * Rebalance uneven disk usage among brokers
 * Multi-Tennancy monitoring: group and view topic metrics (e.g. log size) at tenant level 
 
 # Getting Started
