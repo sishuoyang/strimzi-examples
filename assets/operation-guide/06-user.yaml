@@ -1,0 +1,89 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: team1-user1
+  labels:
+    strimzi.io/cluster: sishuo-cluster
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      # Example ACL rules for consuming from my-topic using consumer group my-group
+      - resource:
+          type: topic
+          name: team1
+          patternType: prefix
+        operations:
+          - Describe
+          - Read
+          - Create
+          - Write
+        host: "*"
+      - resource:
+          type: group
+          name: team1
+          patternType: prefix
+        operations:
+          - Read
+        host: "*"
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: team2-user1
+  labels:
+    strimzi.io/cluster: sishuo-cluster
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      # Example ACL rules for consuming from my-topic using consumer group my-group
+      - resource:
+          type: topic
+          name: team2
+          patternType: prefix
+        operations:
+          - Describe
+          - Read
+          - Create
+          - Write
+        host: "*"
+      - resource:
+          type: group
+          name: team2
+          patternType: prefix
+        operations:
+          - Read
+        host: "*"
+  quotas:
+    producerByteRate: 1000000
+    consumerByteRate: 2097152
+    requestPercentage: 55
+    controllerMutationRate: 10
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: sishuo
+  labels:
+    strimzi.io/cluster: sishuo-cluster
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: cluster
+          name: "*"
+          patternType: literal
+        operations:
+          - Describe
+          - Read
+          - Create
+          - Write
+        host: "*"

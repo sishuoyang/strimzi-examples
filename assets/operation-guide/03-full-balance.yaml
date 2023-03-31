@@ -1,0 +1,9 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaRebalance
+metadata:
+  name: full-rebalance
+  labels:
+    strimzi.io/cluster: sishuo-cluster
+# no goals specified, using the default goals from the Cruise Control configuration
+spec:
+  mode: full

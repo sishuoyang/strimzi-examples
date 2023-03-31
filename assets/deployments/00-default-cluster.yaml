@@ -1,0 +1,83 @@
+# A simple example of ClusterConfig object with two nodegroups:
+--- 
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: sishuo-eks
+  region: ap-southeast-1
+vpc:
+  cidr: 10.10.0.0/16
+  autoAllocateIPv6: false
+  # disable public access to endpoint and only allow private access
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+
+managedNodeGroups:
+  - name: zk-workers
+    instanceType: t3.small
+    minSize: 2
+    desiredCapacity: 3
+    maxSize: 3
+    availabilityZones: ["ap-southeast-1a", "ap-southeast-1b","ap-southeast-1c"]
+    volumeSize: 50
+    updateConfig:
+      maxUnavailable: 3 # or `maxUnavailablePercentage: 75` to specify maxUnavailable as a percentage of total node
+    ssh:
+      allow: true
+      publicKeyName: sishuo-keypair-sg
+    labels: {role: worker}
+    tags:
+      nodegroup-role: worker
+    iam:
+      withAddonPolicies:
+        ebs: true
+  - name: kafka-workers
+    instanceType: r6i.large
+    minSize: 2
+    desiredCapacity: 3
+    maxSize: 9
+    availabilityZones: ["ap-southeast-1a", "ap-southeast-1b","ap-southeast-1c"]
+    volumeSize: 50
+    taints:
+      - key: dedicated
+        value: kafka_only
+        effect: NoSchedule
+    updateConfig:
+      maxUnavailable: 3 # or `maxUnavailablePercentage: 75` to specify maxUnavailable as a percentage of total node
+    ssh:
+      allow: true
+      publicKeyName: sishuo-keypair-sg
+    labels: {role: worker}
+    tags:
+      nodegroup-role: worker
+    iam:
+      withAddonPolicies:
+        ebs: true
+  - name: other-comp
+    instanceType: t3.medium
+    minSize: 1
+    desiredCapacity: 1
+    maxSize: 3
+    availabilityZones: ["ap-southeast-1a", "ap-southeast-1b","ap-southeast-1c"]
+    volumeSize: 50
+    updateConfig:
+      maxUnavailable: 3 # or `maxUnavailablePercentage: 75` to specify maxUnavailable as a percentage of total node
+    ssh:
+      allow: true
+      publicKeyName: sishuo-keypair-sg
+    labels: {role: worker}
+    tags:
+      nodegroup-role: worker
+    iam:
+      withAddonPolicies:
+        ebs: true
+iam:
+  withOIDC: true
+  serviceAccounts:
+  - metadata:
+      name: ebs-csi-controller-sa
+      namespace: kube-system
+    wellKnownPolicies:
+      ebsCSIController: true

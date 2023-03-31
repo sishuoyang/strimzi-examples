@@ -1,0 +1,460 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: sishuo-cluster
+spec:
+  cruiseControl: {}
+  kafka:
+    version: 3.4.0 # remember to change the below inter broker version as well
+    replicas: 3
+    rack:
+      topologyKey: topology.kubernetes.io/zone
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+      - name: ext1
+        port: 9094
+        type: nodeport
+        tls: false
+      - name: ext2
+        port: 9095
+        type: loadbalancer
+        tls: false
+        authentication:
+          type: scram-sha-512
+    authorization:
+      type: simple
+      superUsers:
+        - sishuo
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      # inter.broker.protocol.version: "3.4"
+    storage:
+      type: jbod
+      volumes:
+      - id: 0
+        type: persistent-claim
+        size: 10Gi
+        deleteClaim: false
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yml
+    jvmOptions:
+      javaSystemProperties:
+        - name: -Dcom.sun.management.jmxremote
+          value:
+        - name: -Dcom.sun.management.jmxremote.port
+          value: "9010"
+        - name: -Dcom.sun.management.jmxremote.rmi.port
+          value: "9010"
+        - name: -Dcom.sun.management.jmxremote.local.only
+          value: "false"
+        - name: -Dcom.sun.management.jmxremote.authenticate
+          value: "false"
+        - name: -Dcom.sun.management.jmxremote.ssl
+          value: "false"
+    template:
+      kafkaContainer:
+        env:
+        - name: KAFKA_JMX_OPTS
+          value: -Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.port=9010 -Dcom.sun.management.jmxremote.rmi.port=9010 -Djava.rmi.server.hostname=127.0.0.1
+      pod:
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                  - key: eks.amazonaws.com/nodegroup
+                    operator: In
+                    values:
+                    - kafka-workers
+          podAntiAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchExpressions:
+                    - key: strimzi.io/name
+                      operator: In
+                      values:
+                        - sishuo-cluster-kafka
+                topologyKey: "kubernetes.io/hostname"
+        tolerations:
+          - key: "dedicated"
+            operator: "Equal"
+            value: "kafka_only"
+            effect: "NoSchedule"
+  zookeeper:
+    replicas: 3
+    storage:
+      type: persistent-claim
+      size: 10Gi
+      deleteClaim: false
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: zookeeper-metrics-config.yml
+    template:
+      pod:
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                  - key: eks.amazonaws.com/nodegroup
+                    operator: In
+                    values:
+                    - zk-workers
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: kafka-metrics
+  labels:
+    app: strimzi
+data:
+  kafka-metrics-config.yml: |
+    ---
+    startDelaySeconds: 120
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    cacheRules: true
+    blacklistObjectNames:
+      - "kafka.consumer:type=*,id=*"
+      - "kafka.consumer:type=*,client-id=*"
+      - "kafka.consumer:type=*,client-id=*,node-id=*"
+      - "kafka.producer:type=*,id=*"
+      - "kafka.producer:type=*,client-id=*"
+      - "kafka.producer:type=*,client-id=*,node-id=*"
+      - "kafka.*:type=kafka-metrics-count,*"
+      # This will ignore the admin client metrics from Kafka Brokers and will blacklist certain metrics
+      # that do not make sense for ingestion.
+      # "kafka.admin.client:type=*, node-id=*, client-id=*"
+      # "kafka.admin.client:type=*, client-id=*"
+      # "kafka.admin.client:type=*, id=*"
+      - "kafka.admin.client:*"
+      - "kafka.server:type=*,cipher=*,protocol=*,listener=*,networkProcessor=*"
+      - "kafka.server:type=*"
+      - "kafka.server:type=app-info,id=*"
+      - "kafka.rest:*"
+      - "rest.utils:*"
+      - "io.confluent.common.security.jetty:*"
+      - "io.confluent.rest:*"
+      - "confluent.metadata.service:type=app-info,id=*"
+      - "confluent.metadata.service:type=app-info,client-id=*"
+      - "confluent.metadata:type=kafkaauthstore,*"
+    rules:
+      # This is by far the biggest contributor to the number of sheer metrics being produced.
+      # Always keep it on the top for the case of probability when so many metrics will hit the first condition and exit.
+      # "kafka.cluster:type=*, name=*, topic=*, partition=*"
+      # "kafka.log:type=*,name=*, topic=*, partition=*"
+      - pattern: kafka.(\w+)<type=(.+), name=(.+), topic=((?!team).*), partition=(.+)><>Value
+        name: kafka_$1_$2_$3
+        type: GAUGE
+        labels:
+          topic: "$4"
+          partition: "$5"
+      # Multi-Tenant Log Size
+      - pattern: kafka.(\w+)<type=(.+), name=(.+), topic=(team.+)\.(.+), partition=(.+)><>Value
+        name: kafka_$1_$2_$3_by_tenant
+        type: GAUGE
+        labels:
+          topic: "$4.$5"
+          team: "$4"
+          partition: "$6"
+      # "kafka.server:type=*,name=*, client-id=*, topic=*, partition=*"
+      - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), topic=(.+), partition=(.*)><>Value
+        name: kafka_server_$1_$2
+        type: GAUGE
+        labels:
+          clientId: "$3"
+          topic: "$4"
+          partition: "$5"
+      - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), brokerHost=(.+), brokerPort=(.+)><>Value
+        name: kafka_server_$1_$2
+        type: GAUGE
+        labels:
+          clientId: "$3"
+          broker: "$4:$5"
+      # "kafka.network:type=*, name=*, request=*, error=*"
+      # "kafka.network:type=*, name=*, request=*, version=*"
+      - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.+), (.+)=(.+)><>(Count|Value)
+        name: kafka_$1_$2_$3
+        labels:
+          "$4": "$5"
+          "$6": "$7"
+      - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.*), (.+)=(.+)><>(\d+)thPercentile
+        name: kafka_$1_$2_$3
+        type: GAUGE
+        labels:
+          "$4": "$5"
+          "$6": "$7"
+          quantile: "0.$8"
+      # "kafka.rest:type=*, topic=*, partition=*, client-id=*"
+      # "kafka.rest:type=*, cipher=*, protocol=*, client-id=*"
+      - pattern: kafka.(\w+)<type=(.+), (.+)=(.+), (.+)=(.+), (.+)=(.+)><>Value
+        name: kafka_$1_$2
+        labels:
+          "$3": "$4"
+          "$5": "$6"
+          "$7": "$8"
+      # Count and Value
+      # "kafka.server:type=*, name=*, topic=*"
+      # "kafka.server:type=*, name=*, clientId=*"
+      # "kafka.server:type=*, name=*, delayedOperation=*"
+      # "kafka.server:type=*, name=*, fetcherType=*"
+      # "kafka.network:type=*, name=*, networkProcessor=*"
+      # "kafka.network:type=*, name=*, processor=*"
+      # "kafka.network:type=*, name=*, request=*"
+      # "kafka.network:type=*, name=*, listener=*"
+      # "kafka.log:type=*, name=*, logDirectory=*"
+      # "kafka.log:type=*, name=*, op=*"
+      # "kafka.rest:type=*, node-id=*, client-id=*"
+      - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.+)><>(Count|Value)
+        name: kafka_$1_$2_$3
+        labels:
+          "$4": "$5"
+      # "kafka.consumer:type=*, topic=*, client-id=*"
+      # "kafka.producer:type=*, topic=*, client-id=*"
+      # "kafka.rest:type=*, topic=*, client-id=*"
+      # "kafka.server:type=*, broker-id=*, fetcher-id=*"
+      # "kafka.server:type=*, listener=*, networkProcessor=*"
+      - pattern: kafka.(\w+)<type=(.+), (.+)=(.+), (.+)=(.+)><>(Count|Value)
+        name: kafka_$1_$2
+        labels:
+          "$3": "$4"
+          "$5": "$6"
+      # - pattern: "kafka.(.+)<type=(.+), (.+)=(.+), (.+)=(.+)><>(.+):"
+      #   name: kafka_$1_$2
+      #   labels:
+      #     "$3": "$4"
+      #     "$5": "$6"
+      #     attribute_name: "$7"
+      # "kafka.network:type=*, name=*"
+      # "kafka.server:type=*, name=*"
+      # "kafka.controller:type=*, name=*"
+      # "kafka.databalancer:type=*, name=*"
+      # "kafka.log:type=*, name=*"
+      # "kafka.utils:type=*, name=*"
+      - pattern: kafka.(\w+)<type=(.+), name=(.+)><>(Count|Value)
+        name: kafka_$1_$2_$3
+      # "kafka.producer:type=*, client-id=*"
+      # "kafka.producer:type=*, id=*"
+      # "kafka.rest:type=*, client-id=*"
+      # "kafka.rest:type=*, http-status-code=*"
+      # "kafka.server:type=*, BrokerId=*"
+      # "kafka.server:type=*, listener=*"
+      # "kafka.server:type=*, id=*"
+      - pattern: kafka.(\w+)<type=(.+), (.+)=(.+)><>Value
+        name: kafka_$1_$2
+        labels:
+          "$3": "$4"
+      # - pattern: "kafka.(.+)<type=(.+), (.+)=(.+)><>(.+):"
+      #   name: kafka_$1_$2
+      #   labels:
+      #     "$3": "$4"
+      #     attribute_name: "$5"
+      - pattern: kafka.server<type=KafkaRequestHandlerPool, name=RequestHandlerAvgIdlePercent><>OneMinuteRate
+        name: kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent_total
+        type: GAUGE
+      # "kafka.server:type=*, listener=*, networkProcessor=*, clientSoftwareName=*, clientSoftwareVersion=*"
+      - pattern: kafka.server<type=socket-server-metrics, clientSoftwareName=(.+), clientSoftwareVersion=(.+), listener=(.+), networkProcessor=(.+)><>connections
+        name: kafka_server_socketservermetrics_connections
+        type: GAUGE
+        labels:
+          client_software_name: "$1"
+          client_software_version: "$2"
+          listener: "$3"
+          network_processor: "$4"
+      - pattern: "kafka.server<type=socket-server-metrics, listener=(.+), networkProcessor=(.+)><>(.+):"
+        name: kafka_server_socketservermetrics_$3
+        type: GAUGE
+        labels:
+          listener: "$1"
+          network_processor: "$2"
+      # - pattern: "kafka.server<type=socket-server-metrics, listener=(.+)><>(.+):"
+      #   name: kafka_server_socketservermetrics
+      #   type: GAUGE
+      #   labels:
+      #     listener: "$1"
+      #     attribute_name: "$2"
+      # "kafka.coordinator.group:type=*, name=*"
+      # "kafka.coordinator.transaction:type=*, name=*"
+      - pattern: kafka.coordinator.(\w+)<type=(.+), name=(.+)><>(Count|Value)
+        name: kafka_coordinator_$1_$2_$3
+      # Percentile
+      - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.*)><>(\d+)thPercentile
+        name: kafka_$1_$2_$3
+        type: GAUGE
+        labels:
+          "$4": "$5"
+          quantile: "0.$6"
+      - pattern: kafka.(\w+)<type=(.+), name=(.+)><>(\d+)thPercentile
+        name: kafka_$1_$2_$3
+        type: GAUGE
+        labels:
+          quantile: "0.$4"
+      # Additional Rules for Confluent Server Metrics
+      # 'confluent.metadata:type=*, name=*, topic=*, partition=*'
+      - pattern: confluent.(\w+)<type=(.+), (.+)=(.+), (.+)=(.+), (.+)=(.+)><>(Value|Count)
+        name: confluent_$1_$2
+        type: GAUGE
+        labels:
+          "$3": "$4"
+          "$5": "$6"
+          "$7": "$8"
+      # 'confluent.metadata.service:type=*, node-id=*, client-id=*'
+      - pattern: confluent.(.+)<type=(.+), (.+)=(.+), (.+)=(.+)><>Value
+        name: confluent_$1_$2
+        type: GAUGE
+        labels:
+          "$3": "$4"
+          "$5": "$6"
+      # 'confluent.metadata.service:type=*, node-id=*, client-id=*'
+      - pattern: 'confluent.metadata.service<type=(.+), (.+)=(.+), (.+)=(.+)><>(.+):'
+        name: $1
+        type: GAUGE
+        labels:
+          "$2": "$3"
+          "$4": "$5"
+          attribute_name: "$6"
+      # 'confluent.metadata.service:type=*, client-id=*'
+      # 'confluent.metadata.service:type=*, id=*'
+      # 'confluent.metadata:type=*, name=*'
+      # 'confluent.license:type=*, name=*'
+      - pattern: confluent.(.+)<type=(.+), (.+)=(.+)><>Value
+        name: confluent_$1_$2
+        type: GAUGE
+        labels:
+          "$3": "$4"
+      - pattern: 'confluent.(.+)<type=(.+), (.+)=(.+)><>(.+):'
+        name: confluent_$1_$2
+        type: GAUGE
+        labels:
+          "$3": "$4"
+          attribute_name: "$5"
+      # Quotas
+      - pattern : 'kafka.server<type=(Produce|Fetch|Request), user=(.+), client-id=(.+)><>(.+):'
+        name: kafka_server_$1_$4
+        type: GAUGE
+        labels:
+          user: "$2"
+          client-id: "$3"
+      
+      - pattern : 'kafka.server<type=(Produce|Fetch|Request), user=(.+)><>(.+):'
+        name: kafka_server_$1_$3
+        type: GAUGE
+        labels:
+          user: "$2"
+      
+      - pattern : 'kafka.server<type=(Produce|Fetch|Request), client-id=(.+)><>(.+):'
+        name: kafka_server_$1_$3
+        type: GAUGE
+        labels:
+          client-id: "$2"
+      
+  zookeeper-metrics-config.yml: |
+    ---
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    cacheRules: true
+    whitelistObjectNames:
+      - org.apache.ZooKeeperService:name3=Connections,*
+      - org.apache.ZooKeeperService:name3=InMemoryDataTree,*
+      - org.apache.ZooKeeperService:name0=*,name1=replica*,name2=*
+      - org.apache.ZooKeeperService:name0=*,name1=replica*
+      - org.apache.ZooKeeperService:name0=*
+      # If you are running a Standalone Zookeeper, the whitelist objects below would help.
+      # If the zookeeper has a quorum, no need to worry about anything else.
+      - org.apache.ZooKeeperService:name1=InMemoryDataTree,name0=*
+      - org.apache.ZooKeeperService:name0=*,name1=Connections,name2=*,name3=*
+    rules:
+      # Below rule applies for Zookeeper Cluster having multiple ZK nodes
+      # org.apache.ZooKeeperService:name0=*,name3=Connections,name1=*,name2=*,name4=*,name5=*
+      - pattern: "org.apache.ZooKeeperService<name0=(.+), name1=replica.(\\d+), name2=(\\w+), name3=Connections, name4=(.+), name5=(.+)><>([^:]+)"
+        name: zookeeper_connections_$6
+        labels:
+          server_name: "$1"
+          server_id: $2
+          client_address: "$4"
+          connection_id: "$5"
+          member_type: "$3"
+      - pattern: "org.apache.ZooKeeperService<name0=(.+), name1=replica.(\\d+), name2=(\\w+)><>(\\w+): (\\d+)"
+        name: zookeeper_$4
+        labels:
+          server_name: "$1"
+          server_id: $2
+          member_type: "$3"
+      # Below rule applies for Zookeeper Cluster having multiple ZK nodes
+      # org.apache.ZooKeeperService:name0=*,name3=InMemoryDataTree
+      - pattern: "org.apache.ZooKeeperService<name0=(.+), name1=replica.(\\d+), name2=(\\w+), name3=InMemoryDataTree><>(WatchCount|NodeCount): (\\d+)"
+        name: zookeeper_inmemorydatatree_$4
+        type: GAUGE
+        labels:
+          server_name: "$1"
+          server_id: $2
+          member_type: "$3"
+      # Below rule applies for Zookeeper Cluster having multiple ZK nodes
+      # org.apache.ZooKeeperService:name0=*,name1=replica*
+      - pattern: "org.apache.ZooKeeperService<name0=(.+), name1=replica.(\\d+)><>(.+): (.+)"
+        name: zookeeper_status
+        type: UNTYPED
+        value: 1
+        labels:
+          server_name: "$1"
+          server_id: $2
+          $3: $4
+      # Below rule applies for Zookeeper Cluster having multiple ZK nodes
+      # org.apache.ZooKeeperService:name0=*
+      - pattern: "org.apache.ZooKeeperService<name0=ReplicatedServer_id(\\d+)><>(QuorumSize): (\\d+)"
+        name: zookeeper_status_$2
+        type: GAUGE
+        labels:
+          server_id: $1
+      # ###########################################################################
+      # ###########################################################################
+      # Below rule applies to a Standalone ZK
+      # org.apache.ZooKeeperService:name0=*,name1=InMemoryDataTree
+      - pattern: "org.apache.ZooKeeperService<name0=(.+), name1=InMemoryDataTree><>(WatchCount|NodeCount): (\\d+)"
+        name: zookeeper_inmemorydatatree_$2
+        type: GAUGE
+        labels:
+          server_name: $1
+          server_id: "1"
+      # Below rule applies to a Standalone ZK
+      # org.apache.ZooKeeperService:name0=*,name1=Connections,name2=*,name3=*
+      - pattern: "org.apache.ZooKeeperService<name0=(.+), name1=Connections, name2=(.+), name3=(.+)><>([^:]+)"
+        name: zookeeper_connections_$4
+        labels:
+          server_name: "$1"
+          client_address: "$2"
+          connection_id: "$3"
+      # Below rule applies to a Standalone ZK
+      # org.apache.ZooKeeperService:name0=*
+      - pattern: "org.apache.ZooKeeperService<name0=(.+)><>(StartTime|ClientPort|SecureClientAddress|Version|SecureClientPort): (.+)"
+        name: zookeeper_$2
+        value: 1
+        labels:
+          server_name: "$1"
+          $2: "$3"
+      # Below rule applies to a Standalone ZK
+      # org.apache.ZooKeeperService:name0=*
+      - pattern: "org.apache.ZooKeeperService<name0=(.+)><>(.+): (.+)"
+        name: zookeeper_$2
+        type: GAUGE

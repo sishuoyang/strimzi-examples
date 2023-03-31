@@ -1,0 +1,12 @@
+{
+    "version": 1,
+    "partitions": [
+        {
+            "topic": "test-p1-r1",
+            "partition": 0,
+            "replicas": [
+                5,1,3
+            ]
+        }
+    ]
+}
