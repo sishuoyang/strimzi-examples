@@ -13,7 +13,7 @@ This repository contains the following Strimzi examples
 1. Review `/assets/deployments/00-default-cluster.yaml` and update `KeyPair`, `instanceType` etc.
 2. Run `02-create-eks-cluster.sh` to provision EKS in AWS.
 
-## Deplooy Kafka and Prometheus
+## Deploy Kafka and Prometheus
 1. Run `01-kafka-cluster.sh` to deploy Kafka, Prometheus and Grafana.
 2. After the deployment is done, run the below command to access P/G using local ports.
     ```bash
@@ -52,7 +52,7 @@ In this exercise we scale the cluster from 3 pod to 4 pod. Each pod use a dedica
 4. Run `kubectl get pods` to check the new pod is created.
 
     If the Grafana dashboard still shows 3 brokers, go to dashboard setting -> variable -> `kafka_broker` -> `run query`.
-5. Rebalance the Cluster. To move the partition replicas to the new broker, we use `Strimzi Cruise Control `to Rebalance the cluster.
+5. Rebalance the Cluster. To move the partition replicas to the new broker, we use `Strimzi Cruise Control` to Rebalance the cluster.
     ```bash
     kubectl apply -f ./assets/operation-guide/00-add-brokers.yaml
 
@@ -140,13 +140,16 @@ In this excersise we simulate a Kafka cluster with uneven data storage and rebal
     ```
 4. Wait for 30 minutes to generate unbalanced load. You can view the PV usage using the kafka-cluster dashboard.![Alt](./assets/dashboard/kafka-cluster-strimzi.png "Kafka Cluster Dashboard")
 
-1. Rebalance cluster
+5. Rebalance cluster
     ```bash
     ## apply rebalance custom resource
     kubectl apply -f ./assets/operation-guide/02-balance-disk.yaml
     ## approve the proposal
     kubectl annotate kafkarebalance my-disk-rebalance strimzi.io/rebalance=approve
     ```
+6. Compare the disk usage of each Pod's PV.
+![Alt](./assets/dashboard/rebalance.png "Kafka Cluster Rebalancing")
+
 
 ## Failure Scenario
 ### Pod Failure
