@@ -1,4 +1,5 @@
 # Introduction
+
 This repository contains the following Strimzi examples
 * Monitoring using Prometheus & Grafan with sample `Kafka Cluster` dashboard ported for K8s environment.
 * Scaling brokers up and down
